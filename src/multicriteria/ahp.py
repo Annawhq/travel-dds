@@ -1,4 +1,5 @@
 import numpy as np
+from src.multicriteria.alternatives import PROJECT_ROOT, load_alternatives
 
 RI_VALUES = {
     1: 0.00,
@@ -97,21 +98,9 @@ if __name__ == "__main__":
         print(f"{criterion}: {weight:.4f}")
     print()
 
-    alternatives = [
-        "Казань",
-        "Калининград",
-        "Сочи",
-        "Санкт-Петербург",
-        "Нижний Новгород",
-    ]
-
-    alternatives_matrix = np.array([
-        [4, 3, 5, 4, 5],  # Казань
-        [3, 4, 3, 5, 4],  # Калининград
-        [2, 5, 4, 5, 4],  # Сочи
-        [2, 2, 5, 5, 5],  # Санкт-Петербург
-        [5, 3, 4, 4, 3],  # Нижний Новгород
-    ], dtype=float)
+    alternatives, alternatives_matrix = load_alternatives(
+        PROJECT_ROOT / "data" / "test" / "destinations.csv"
+    )
 
     print(f"CR = {consistency_ratio:.4f}")
     if consistency_ratio < 0.1:
