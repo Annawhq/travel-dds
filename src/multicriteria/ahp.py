@@ -66,10 +66,19 @@ def evaluate_alternatives(
     weights: np.ndarray) -> np.ndarray:
     """
     Рассчитывает итоговые оценки альтернатив
-    на основе оценок по критериям и весов критериев.
+    на основе оценок по критериям и весов критериев
     """
     return alternatives_matrix @ weights
 
+
+# Тестовый профиль пользователя (матрица парных сравнений критериев)
+TEST_COMPARISON_MATRIX = np.array([
+    [1,   3,   3,   2,   2],
+    [1/3, 1,   1, 1/3, 1/3],
+    [1/3, 1,   1, 1/3, 1/3],
+    [1/2, 3,   3,   1,   1],
+    [1/2, 3,   3,   1,   1],
+], dtype=float)
 
 if __name__ == "__main__":
     criteria = [
@@ -80,14 +89,7 @@ if __name__ == "__main__":
         "Соответствие интересам",
     ]
 
-    comparison_matrix = np.array([
-        [1,   3,   3,   2,   2],
-        [1/3, 1,   1, 1/3, 1/3],
-        [1/3, 1,   1, 1/3, 1/3],
-        [1/2, 3,   3,   1,   1],
-        [1/2, 3,   3,   1,   1],
-    ], dtype=float)
-
+    comparison_matrix = TEST_COMPARISON_MATRIX
     weights = calculate_weights(comparison_matrix)
     consistency_ratio = calculate_consistency_ratio(
         comparison_matrix,
