@@ -14,6 +14,7 @@ DAY_START = 10 * 60   # 10:00, минуты от полуночи
 DAY_END = 20 * 60     # 20:00
 LUNCH_WINDOW = (12 * 60, 15 * 60)  # начало посещения объектов food: 12:00-15:00
 RETURN_TIME_WEIGHT = 0.001        # малый вес: при равной дороге - вернуться раньше
+ROUTE_TIME_LIMIT = 30              # секунд на поиск маршрута одного дня
 
 
 def to_clock(minutes: float) -> str:
@@ -28,7 +29,8 @@ def solve_day_route(
     hotel_lon: float,
     day_start: int = DAY_START,
     day_end: int = DAY_END,
-    lunch_window: tuple[int, int] | None = LUNCH_WINDOW,) -> pd.DataFrame:
+    lunch_window: tuple[int, int] | None = LUNCH_WINDOW,
+    time_limit: int = ROUTE_TIME_LIMIT,) -> pd.DataFrame:
     """
     Порядок посещения объектов одного дня - задача коммивояжера
     с временными окнами (TSPTW). Маршрут начинается и заканчивается
@@ -87,7 +89,7 @@ def solve_day_route(
         for j in food:
             model += s[j] >= lunch_start, f"lunch_from_{j}"
             model += s[j] <= lunch_end, f"lunch_to_{j}"
-    model.solve(pulp.PULP_CBC_CMD(msg=False))
+    model.solve(pulp.PULP_CBC_CMD(msg=False, timeLimit=time_limit))
     status = pulp.LpStatus[model.status]
     if status != "Optimal":
         raise RuntimeError(
