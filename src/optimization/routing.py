@@ -12,6 +12,8 @@ from src.optimization.trip_plan import BASE_ID, TEST_TRIP, solve_clustered_trip
 HOTEL = "hotel"
 DAY_START = 10 * 60   # 10:00, минуты от полуночи
 DAY_END = 20 * 60     # 20:00
+LUNCH_WINDOW = (12 * 60, 15 * 60)  # начало посещения объектов food: 12:00-15:00
+RETURN_TIME_WEIGHT = 0.001        # малый вес: при равной дороге - вернуться раньше
 
 
 def to_clock(minutes: float) -> str:
@@ -25,7 +27,8 @@ def solve_day_route(
     hotel_lat: float,
     hotel_lon: float,
     day_start: int = DAY_START,
-    day_end: int = DAY_END,) -> pd.DataFrame:
+    day_end: int = DAY_END,
+    lunch_window: tuple[int, int] | None = LUNCH_WINDOW,) -> pd.DataFrame:
     """
     Порядок посещения объектов одного дня - задача коммивояжера
     с временными окнами (TSPTW). Маршрут начинается и заканчивается
@@ -37,6 +40,7 @@ def solve_day_route(
              s_j ≥ s_i + v_i + t_ij − M(1 − z[i, j])   время согласовано
              open_j ≤ s_j,  s_j + v_j ≤ close_j      часы работы
              возвращение в гостиницу не позже day_end
+             объекты food начинаются внутри окна обеда
     """
     hotel = pd.DataFrame(
         {"lat": [hotel_lat], "lon": [hotel_lon], "visit_min": [0],
@@ -57,7 +61,9 @@ def solve_day_route(
     s = {i: pulp.LpVariable(f"s_{i}", lowBound=0) for i in nodes}
     end = pulp.LpVariable("return_time", lowBound=0)
 
-    model += pulp.lpSum(float(travel.at[i, j]) * z[i, j] for (i, j) in z), "total_travel"
+    model += (
+            pulp.lpSum(float(travel.at[i, j]) * z[i, j] for (i, j) in z)
+            + RETURN_TIME_WEIGHT * end), "total_travel"
     for j in nodes:
         model += pulp.lpSum(z[i, j] for i in nodes if i != j) == 1, f"in_{j}"
         model += pulp.lpSum(z[j, k] for k in nodes if k != j) == 1, f"out_{j}"
@@ -75,7 +81,12 @@ def solve_day_route(
         model += (s[j] + float(points.at[j, "visit_min"])
                   <= float(points.at[j, "close_min"])), f"close_{j}"
     model += end <= day_end, "day_end"
-
+    if lunch_window is not None:
+        lunch_start, lunch_end = lunch_window
+        food = day_objects.index[day_objects["category"] == "food"]
+        for j in food:
+            model += s[j] >= lunch_start, f"lunch_from_{j}"
+            model += s[j] <= lunch_end, f"lunch_to_{j}"
     model.solve(pulp.PULP_CBC_CMD(msg=False))
     status = pulp.LpStatus[model.status]
     if status != "Optimal":
