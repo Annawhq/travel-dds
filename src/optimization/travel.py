@@ -10,6 +10,8 @@ CITY_SPEED_KMH = 30     # средняя скорость такси / обще�
 MIN_TRANSFER_MIN = 15   # минимальный переход между соседними объектами
 WALK_IN_CLUSTER_MIN = 10   # пеший переход между объектами внутри кластера
 MAX_CLUSTER_DIAMETER_KM = 1.0
+WALK_SPEED_KMH = 4.5     # скорость пешехода
+RIDE_WAIT_MIN = 10       # ожидание такси / транспорта перед поездкой
 
 
 def access_time(
@@ -69,3 +71,21 @@ def cluster_access_time(
     """
     centers = objects.groupby(clusters)[["lat", "lon"]].mean()
     return access_time(centers, base_lat, base_lon)
+
+
+def travel_time_matrix(
+    points: pd.DataFrame,
+    detour: float = DETOUR_FACTOR,
+    walk_kmh: float = WALK_SPEED_KMH,
+    ride_kmh: float = CITY_SPEED_KMH,
+    ride_wait: int = RIDE_WAIT_MIN,) -> pd.DataFrame:
+    """
+    Время переезда между всеми парами точек (мин).
+    Для каждой пары выбирается более быстрый способ:
+    пешком или транспортом (с учетом ожидания)
+    """
+    km = distance_matrix_km(points) * detour
+    walk = km / walk_kmh * 60
+    ride = km / ride_kmh * 60 + ride_wait
+    minutes = np.minimum(walk, ride).round()
+    return pd.DataFrame(minutes, index=points.index, columns=points.index)
