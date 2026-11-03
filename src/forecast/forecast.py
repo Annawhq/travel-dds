@@ -85,6 +85,22 @@ def rain_scenarios(weather: pd.DataFrame, trip_days: int = TRIP_DAYS,
     return pd.DataFrame(rows)
 
 
+SCENARIO_NAMES = {
+    "p_better": "Лучше ожидаемого (без дождя)",
+    "p_normal": "Обычная (дождь в части дней)",
+    "p_worse": "Хуже ожидаемого (дождь все дни)",
+}
+
+
+def scenarios_long(scenarios: pd.DataFrame) -> pd.DataFrame:
+    """Сценарии в «длинном» формате: одна строка = месяц + сценарий"""
+    long = scenarios.melt(id_vars="month", value_vars=list(SCENARIO_NAMES),
+                          var_name="scenario", value_name="probability")
+    long["scenario"] = long["scenario"].map(SCENARIO_NAMES)
+    long["month_name"] = long["month"].map(lambda m: MONTH_NAMES[m - 1])
+    return long.round(3)
+
+
 def dashboard_table(table, model, rain_norm) -> pd.DataFrame:
     """Факт 1991–2025 и прогноз на FORECAST_YEARS в одной таблице для BI"""
     fact = table[["year", "month", "t_mean", "precip_mm", "rainy_share"]].copy()
@@ -137,7 +153,7 @@ if __name__ == "__main__":
     PROCESSED_DIR.mkdir(parents=True, exist_ok=True)
     dashboard_table(table, model, rain_norm).to_csv(
         PROCESSED_DIR / "weather_dashboard.csv", index=False, encoding="utf-8")
-    scenarios.round(3).to_csv(
+    scenarios_long(scenarios).to_csv(
         PROCESSED_DIR / "weather_scenarios.csv", index=False, encoding="utf-8")
     print()
     print(f"Таблицы для дашборда сохранены в {PROCESSED_DIR}")
