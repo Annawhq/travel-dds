@@ -1,4 +1,5 @@
 from pathlib import Path
+from math import isfinite
 import numpy as np
 import pandas as pd
 from src.multicriteria.alternatives import PROJECT_ROOT
@@ -13,7 +14,7 @@ CATEGORIES = {
     "walk", "food", "entertainment", "excursion",
 }
 
-# Грубые границы Казани и пригородов для проверки координат
+# Грубые границы Казани и пригородов для обратной совместимости с этапом 4
 LAT_RANGE = (55.5, 56.1)
 LON_RANGE = (48.4, 49.5)
 
@@ -64,11 +65,20 @@ def compute_attractiveness(
     return 1 + 4 * score
 
 
-def load_objects(path: Path) -> pd.DataFrame:
-    """
-    Загружает туристические объекты и проверяет качество данных.
-    Добавляет столбцы: open_min, close_min (минуты от полуночи)
-    и attractiveness (привлекательность 1–5)
+def load_objects(
+    path: Path,
+    *,
+    city_center: tuple[float, float] | None = None,
+    max_distance_km: float = 60.0,
+) -> pd.DataFrame:
+    """Загружает каталог объектов и проверяет его качество.
+
+    Без city_center сохраняется исходная проверка координат Казани (этап 4).
+    Для другого города передайте (широта, долгота) его центра и допустимый
+    радиус каталога, включая возможные загородные объекты. Это позволяет
+    обнаруживать ошибочные координаты, не привязываясь к Казани.
+
+    Добавляет open_min, close_min и attractiveness; формат CSV не меняется.
     """
     df = pd.read_csv(path)
     missing = [c for c in REQUIRED_COLUMNS if c not in df.columns]
@@ -90,9 +100,39 @@ def load_objects(path: Path) -> pd.DataFrame:
     if unknown:
         raise ValueError(f"Неизвестные категории: {unknown}")
 
-    if not df["lat"].between(*LAT_RANGE).all() \
-            or not df["lon"].between(*LON_RANGE).all():
-        raise ValueError("Координаты выходят за пределы Казани и пригородов.")
+    # Глобальная географическая корректность обязательна для любого города.
+    for column in ("lat", "lon"):
+        df[column] = pd.to_numeric(df[column], errors="coerce")
+    if (df[["lat", "lon"]].isna().any().any()
+            or not df["lat"].between(-90, 90).all()
+            or not df["lon"].between(-180, 180).all()):
+        raise ValueError("Некорректные географические координаты объектов.")
+
+    if city_center is None:
+        # Старые вызовы load_objects(path) сохраняют поведение этапа 4.
+        if (not df["lat"].between(*LAT_RANGE).all()
+                or not df["lon"].between(*LON_RANGE).all()):
+            raise ValueError("Координаты выходят за пределы Казани и пригородов.")
+    else:
+        try:
+            center_lat, center_lon = map(float, city_center)
+            radius = float(max_distance_km)
+        except (TypeError, ValueError, OverflowError) as exc:
+            raise ValueError("Нужны центр города (lat, lon) и числовой радиус") from exc
+        if (not isfinite(center_lat) or not isfinite(center_lon)
+                or not -90 <= center_lat <= 90
+                or not -180 <= center_lon <= 180
+                or not isfinite(radius) or radius <= 0):
+            raise ValueError("Некорректный центр города или радиус каталога")
+
+        distances = haversine_km(
+            center_lat, center_lon, df["lat"].to_numpy(), df["lon"].to_numpy()
+        )
+        if (distances > radius).any():
+            bad_ids = df.loc[distances > radius, "id"].tolist()
+            raise ValueError(
+                f"Объекты вне радиуса {radius:g} км от центра города: {bad_ids}"
+            )
 
     if (df["visit_min"] <= 0).any():
         raise ValueError("Длительность посещения должна быть положительной.")
