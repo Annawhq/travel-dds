@@ -67,8 +67,14 @@ CITY_ROUTE_CONFIGS: dict[str, CityRouteConfig] = {
     ),
     "Калининград": CityRouteConfig(
         catalog_path=PROJECT_ROOT / "data" / "raw" / "kaliningrad_objects.csv",
-        city_center=(54.7104, 20.4522),
-        start_coordinates=(54.7104, 20.4522),
+        city_center=(54.706129, 20.511063),
+        start_coordinates=(54.706129, 20.511063),
+    ),
+    "Сочи": CityRouteConfig(
+        catalog_path=PROJECT_ROOT / "data" / "raw" / "sochi_objects.csv",
+        city_center=(43.5855, 39.7231),
+        start_coordinates=(43.5855, 39.7231),
+        max_distance_km=60.0,
     ),
 }
 
