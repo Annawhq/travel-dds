@@ -5,3 +5,4 @@ jupyter
 networkx
 scipy
 pulp==2.9.0
+streamlit
