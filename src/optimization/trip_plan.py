@@ -91,7 +91,8 @@ def solve_clustered_trip(
     budget: float,
     meals_per_day: int = 0,
     max_per_category: int | None = None,
-    walk_min: int = WALK_IN_CLUSTER_MIN,) -> pd.DataFrame:
+    walk_min: int = WALK_IN_CLUSTER_MIN,
+    allow_repeat_food: bool = False,) -> pd.DataFrame:
     """
     Модель распределения объектов по дням с кластерами пешей доступности
     Столбец objects["cluster"] - кластер объекта,
@@ -124,9 +125,18 @@ def solve_clustered_trip(
     # Объект можно посетить только в тот день, когда едем в его кластер
     for (i, d) in x:
         model += x[i, d] <= y[objects.at[i, "cluster"], d], f"link_{i}_day{d}"
-    # Каждый кластер - не более одного дня (это же исключает повторы объектов)
+    # Ранее все кластеры могли использоваться только в одном дне
+    # Для 3-дневной поездки с двумя приемами пищи кафе может понадобиться
+    # повторно. Разрешаем повторные посещения только для категории food
+    # Прочие объекты продолжают посещаться не более одного раза за поездку
     for c in clusters:
-        model += pulp.lpSum(y[c, d] for d in day_list) <= 1, f"once_{c}"
+        cluster_items = objects.loc[objects["cluster"] == c]
+        has_food = (cluster_items["category"] == "food").any()
+        if not (allow_repeat_food and has_food):
+            model += pulp.lpSum(y[c, d] for d in day_list) <= 1, f"once_{c}"
+    if allow_repeat_food:
+        for i in objects.index[objects["category"] != "food"]:
+            model += pulp.lpSum(x[i, d] for d in day_list) <= 1, f"once_object_{i}"
     for d in day_list:
         model += (
             pulp.lpSum((value(i, "visit_min") + walk_min) * x[i, d]

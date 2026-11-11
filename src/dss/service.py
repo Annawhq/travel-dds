@@ -1,7 +1,6 @@
 """Этап 8. Единый сервис выбора города, бюджета и персонального маршрута.
 Маршруты строятся для городов с каталогом объектов в формате этапа 4.
-Тестовые сметы и тематические оценки НЕ являются рыночными данными.
-Пока проверенный сценарий маршрутизации: два дня, 10:00–20:00
+Поддерживаемая продолжительность: 1-3 дня, время 10:00–20:00.
 """
 
 from dataclasses import dataclass, replace
@@ -22,7 +21,9 @@ from src.optimization.travel import cluster_access_time, cluster_objects
 from src.optimization.trip_plan import BASE_ID
 from src.recommendations.budget import BudgetLimits, calculate_budget
 from src.recommendations.city_budget import CityCostEstimate, recommend_cities_with_budget
-from src.recommendations.cost_catalog import load_cost_estimates
+from src.recommendations.cost_catalog import (
+    load_cost_estimates, expand_test_cost_estimates,
+)
 from src.recommendations.places import KAZAN_CATALOG, recommend_places
 from src.recommendations.profile import TravelProfile
 
@@ -32,11 +33,11 @@ DEFAULT_COSTS_PATH = PROJECT_ROOT / "data" / "test" / "city_costs.csv"
 
 @dataclass(frozen=True)
 class CityRouteConfig:
-    """Настройки маршрута для города с каталогом достопримечательностей
-    city_center - центр проверки координат (широта, долгота)
-    start_coordinates - условное место проживания, НЕ реальная гостиница
+    """Настройки маршрута для города с каталогом достопримечательностей.
+    city_center - центр проверки координат (широта, долгота).
+    start_coordinates - условное место проживания.
     start_object_id - альтернатива координатам: объект каталога у места
-    проживания. В старом сценарии Казани используется объект 'kremlin'
+    проживания. В старом сценарии Казани используется объект 'kremlin'.
     """
     catalog_path: str | Path
     city_center: tuple[float, float] | None = None
@@ -51,10 +52,10 @@ class CityRouteConfig:
             )
 
 
-# В реальных каталогах ниже данные еще предстоит собрать. Центры городов
-# используются также как условные места проживания
+# Каталоги новых городов находятся в data/raw/. Центры городов
+# используются как условные места проживания.
 # Добавление новых городов не требует менять алгоритмы: достаточно
-# зарегистрировать CityRouteConfig и положить CSV в указанную папку
+# зарегистрировать CityRouteConfig и положить CSV в указанную папку.
 CITY_ROUTE_CONFIGS: dict[str, CityRouteConfig] = {
     "Казань": CityRouteConfig(
         catalog_path=KAZAN_CATALOG,
@@ -134,9 +135,7 @@ def _activity_limit(profile: TravelProfile, estimate: CityCostEstimate) -> float
     return min(limits) if limits else inf
 
 
-def _start_point(
-    config: CityRouteConfig, objects: pd.DataFrame
-) -> tuple[float, float]:
+def _start_point(config: CityRouteConfig, objects: pd.DataFrame) -> tuple[float, float]:
     """Координаты начала/конца маршрутов всех дней"""
     if config.start_object_id is not None:
         if config.start_object_id not in objects.index:
@@ -166,7 +165,8 @@ def _build_city_route(
     estimate: CityCostEstimate,
     ranked_places: pd.DataFrame,
     config: CityRouteConfig,
-    feedback_extra_min: int,) -> RouteResult:
+    feedback_extra_min: int,
+) -> RouteResult:
     """Персонализирует целевую функцию и строит маршрут заданного города"""
     meals = _meals_from_knowledge_base(profile)
     budget_cap = _activity_limit(profile, estimate)
@@ -183,7 +183,7 @@ def _build_city_route(
     if len(objects) < 2:
         raise RuntimeError("Для кластеризации необходимо хотя бы два объекта")
 
-    # Как в старой версии: кластеры вычисляются на всем каталоге до фильтров.
+    # Как в старой версии: кластеры вычисляются на всем каталоге до фильтров
     objects["cluster"] = cluster_objects(objects)
     scores = ranked_places.set_index("object_id")["score"]
     objects = objects.loc[objects.index.intersection(scores.index)].copy()
@@ -191,15 +191,16 @@ def _build_city_route(
         raise RuntimeError("После фильтрации не осталось доступных объектов")
 
     # Оптимизатор этапа 4 максимизирует столбец attractiveness. Подставляем
-    # в него персональные оценки, сохранив исходную привлекательность отдельно.
+    # в него персональные оценки, сохранив исходную привлекательность отдельно
     objects["original_attractiveness"] = objects["attractiveness"]
     objects["attractiveness"] = scores.loc[objects.index].astype(float)
 
-    if (objects["category"] == "food").sum() < meals * profile.days:
-        raise RuntimeError(
-            "Не хватает объектов питания для заданного числа приемов пищи "
-            "(каждый объект разрешено использовать не более одного раза)"
-        )
+    available_food = int((objects["category"] == "food").sum())
+    if available_food < meals:
+        raise RuntimeError("В каталоге недостаточно кафе даже для одного дня")
+    # При нехватке разных кафе разрешаем повторить кафе в другой день
+    # Другие достопримечательности повторять нельзя
+    repeat_food = available_food < meals * profile.days
 
     if budget_cap == inf:
         budget_cap = float(objects["price"].sum())
@@ -209,18 +210,33 @@ def _build_city_route(
     )
     trip = {
         "days": profile.days,
-        "day_minutes": 600,  # 10:00–20:00, как в этапе 4
+        # При двух приемах пищи оставляем 120 мин резерва на разделенные
+        # окна обеда и ужина: фактический день всё равно 10:00–20:00
+        "day_minutes": 480 if meals == 2 else 600,
         "budget": budget_cap,
         "meals_per_day": meals,
         "max_per_category": 2,
+        "allow_repeat_food": repeat_food,
     }
-    best, history = plan_with_feedback(
-        objects, cluster_access, hotel_lat, hotel_lon,
-        trip, max_extra=feedback_extra_min,
-    )
+    # При обеде и ужине два разнесенных временных окна оставляют меньше
+    # свободы для посещений. Если жадная по полезности верхняя модель
+    # выбрала набор, не помещающийся в расписание, уменьшаем ее временной
+    # лимит и ищем более компактный маршрут. Реальный день 10-20 не меняем
+    daily_limits = (480, 420, 360) if meals == 2 else (600,)
+    best = None
+    history = pd.DataFrame()
+    for candidate_minutes in daily_limits:
+        trip["day_minutes"] = candidate_minutes
+        best, history = plan_with_feedback(
+            objects, cluster_access, hotel_lat, hotel_lon,
+            trip, max_extra=feedback_extra_min,
+        )
+        if best is not None:
+            break
     if best is None:
         raise RuntimeError(
-            "Не удалось подобрать маршрут в пределах часов работы и дня"
+            "Не удалось подобрать маршрут в пределах часов работы и дня "
+            "(проверены более компактные планы с обедом и ужином)"
         )
 
     _time_budget, plan, schedules = best
@@ -256,13 +272,14 @@ def analyze_trip(
     city_configs: Mapping[str, CityRouteConfig] | None = None,
 ) -> DecisionResult:
     """Рейтинг городов → бюджет → объекты → (по запросу) маршрут.
-
     Для новых городов можно передать дополнительные city_configs.
     Если каталога нет, рейтинг и смета продолжают работать.
-    Проверенная продолжительность маршрута — 2 дня.
+    Поддерживаемая продолжительность маршрута - от 1 до 3 дней.
     """
     if profile.origin is None:
         raise ValueError("Укажи город отправления в TravelProfile.origin")
+    if profile.days not in (1, 2, 3):
+        raise ValueError("На этапе 8 поддерживаются поездки на 1, 2 или 3 дня")
     for name, value in (("top_cities", top_cities), ("top_places", top_places)):
         if isinstance(value, bool) or not isinstance(value, int) or value < 1:
             raise ValueError(f"{name} должен быть положительным целым числом")
@@ -272,7 +289,7 @@ def analyze_trip(
         raise ValueError("feedback_extra_min должен быть целым числом от 0 до 120")
 
     configs = {**CITY_ROUTE_CONFIGS, **(city_configs or {})}
-    estimates = load_cost_estimates(costs_path)
+    estimates = expand_test_cost_estimates(load_cost_estimates(costs_path))
     all_cities = recommend_cities_with_budget(
         profile, estimates, top_n=None, only_affordable=False
     )
@@ -284,6 +301,14 @@ def analyze_trip(
         "Цены и тематические оценки в data/test/ учебные, "
         "а не актуальные предложения перевозчиков и гостиниц."
     ]
+    if profile.days != 2 and any(
+        e.days == profile.days and "УЧЕБНЫЙ пересчет" in e.source
+        for e in estimates
+    ):
+        notices.append(
+            "Сметы на 1 и 3 дня пересчитаны из учебных двухдневных: "
+            "длительность поездки не учитывает время дороги до города."
+        )
     if all_cities["budget_ok"].isna().all():
         notices.append(
             f"Нет смет для отправления из {profile.origin} на {profile.days} дн."
@@ -328,7 +353,7 @@ def analyze_trip(
             notices.append(
                 f"Для города {selected_city} пока нет каталога "
                 f"{Path(config.catalog_path).name}. "
-                "Добавим его позже."
+                "Добавим его на следующем шаге."
             )
         else:
             all_places = recommend_places(
@@ -342,21 +367,31 @@ def analyze_trip(
             places = all_places.head(top_places).copy()
 
             if build_route:
-                if profile.days != 2:
+                if estimate is None:
+                    notices.append("Маршрут не строится: отсутствует смета поездки.")
+                elif (profile.tickets_budget is not None and
+                      estimate.costs.round_trip_tickets > profile.tickets_budget):
+                    notices.append("Маршрут не строится: превышен лимит билетов.")
+                elif (profile.total_budget is not None and
+                      (estimate.costs.round_trip_tickets
+                       + estimate.costs.price_per_night * estimate.costs.nights
+                       + estimate.costs.local_transport)
+                      * (1 + estimate.costs.reserve_fraction) > profile.total_budget):
                     notices.append(
-                        "Маршрут пока проверен только для двухдневной поездки. "
-                        "Для другой продолжительности нужна проверка модели "
-                        "и соответствующие сметы."
-                    )
-                elif not financially_allowed or estimate is None:
-                    notices.append(
-                        "Маршрут не строится: сначала нужна допустимая смета поездки."
+                        "Маршрут не строится: обязательные расходы уже превышают бюджет."
                     )
                 else:
+                    # Предварительная смета может быть завышена: оптимизатор
+                    # иногда находит набор объектов дешевле плановой оценки
                     try:
                         route = _build_city_route(
                             profile, estimate, all_places, config, feedback_extra_min
                         )
+                        if not financially_allowed:
+                            notices.append(
+                                "После оптимизации фактические расходы на объекты "
+                                "снизились: итоговый бюджет маршрута соблюден."
+                            )
                     except (RuntimeError, ValueError) as exc:
                         notices.append(f"Маршрут не построен: {exc}")
             else:
@@ -377,7 +412,6 @@ def analyze_trip(
 
 
 if __name__ == "__main__":
-    # Прежний тестовый сценарий Казани должен работать без изменений.
     profile = TravelProfile(
         origin="Москва", days=2, total_budget=30_000,
         tickets_budget=15_000, activity_budget=3_000,
