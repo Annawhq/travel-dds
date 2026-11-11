@@ -1,15 +1,20 @@
-"""Travel DSS - единый интерфейс принятия решений (этап 8)
+"""Travel DSS — единый интерфейс принятия решений (этап 8).
+
 Запуск из корня репозитория:
     python -m streamlit run app.py
+
 Зависимости: requirements.txt проекта + streamlit.
-Все цены и тематические оценки в data/test/ являются учебными
+Все цены и тематические оценки в data/test/ являются учебными.
 """
 
 from __future__ import annotations
+
 from datetime import date
 from pathlib import Path
+
 import pandas as pd
 import streamlit as st
+
 from src.dss.service import CITY_ROUTE_CONFIGS, DecisionResult, analyze_trip
 from src.forecast.forecast import FORECAST_YEARS
 from src.multicriteria.alternatives import CRITERIA_COLUMNS, load_alternatives
@@ -24,6 +29,10 @@ CRITERION_LABELS = {
     "attractiveness": "Привлекательность",
     "interests": "Соответствие интересам",
 }
+# Предельное время одного интерактивного расчета маршрута.
+# Тесты оптимизации без этого аргумента продолжают работать как прежде.
+INTERACTIVE_ROUTE_TIMEOUT_SECONDS = 90.0
+
 MONTHS = {
     1: "Январь", 2: "Февраль", 3: "Март", 4: "Апрель",
     5: "Май", 6: "Июнь", 7: "Июль", 8: "Август",
@@ -32,14 +41,14 @@ MONTHS = {
 
 
 def rubles(value: float | int | None) -> str:
-    """Форматирование рублей для отображения без изменения расчетов"""
+    """Форматирование рублей для отображения без изменения расчетов."""
     if value is None or pd.isna(value):
         return "Нет данных"
     return f"{float(value):,.0f}".replace(",", " ") + " ₽"
 
 
 def clean_city_selection() -> None:
-    """При изменении города убираем результаты прежнего направления"""
+    """При изменении города убираем результаты прежнего направления."""
     st.session_state.pop("detail", None)
     st.session_state.pop("confirmed_city", None)
 
@@ -58,7 +67,7 @@ def build_profile(
     custom_weights: bool,
     weights: dict[str, float],
 ) -> TravelProfile:
-    """Один профиль используется во всех этапах системы"""
+    """Один профиль используется во всех этапах системы."""
     return TravelProfile(
         origin=origin,
         days=int(days),
@@ -75,7 +84,7 @@ def build_profile(
 
 
 def show_rankings(result: DecisionResult) -> None:
-    """Сравнение всех направлений с отдельной проверкой финансовой доступности"""
+    """Сравнение всех направлений с отдельной проверкой финансовой доступности."""
     ranking = result.all_cities
     affordable = ranking.loc[ranking["budget_ok"].eq(True)]
     best_overall = str(ranking.iloc[0]["city"])
@@ -112,7 +121,7 @@ def show_rankings(result: DecisionResult) -> None:
 
 
 def show_budget(result: DecisionResult, profile: TravelProfile) -> None:
-    """Общая смета со всеми составляющими и проверкой лимитов"""
+    """Общая смета со всеми составляющими и проверкой лимитов."""
     preliminary = result.city_budget
     if preliminary is None:
         st.warning("Для выбранного маршрута нет сметы поездки.")
@@ -152,7 +161,7 @@ def show_budget(result: DecisionResult, profile: TravelProfile) -> None:
 
 
 def show_weather(result: DecisionResult) -> None:
-    """Сценарии и температура Казани, не погода на определенную дату"""
+    """Сценарии и температура Казани, не погода на определенную дату."""
     w = result.weather
     if w is None:
         if result.selected_city != "Казань":
@@ -208,7 +217,7 @@ def show_places(result: DecisionResult) -> None:
 
 
 def _route_map_data(result: DecisionResult) -> tuple[pd.DataFrame, list[dict]]:
-    """Координаты объектов и схематические линии"""
+    """Координаты объектов и схематические линии; не дорожная навигация."""
     if result.route is None or result.selected_city not in CITY_ROUTE_CONFIGS:
         return pd.DataFrame(), []
     config = CITY_ROUTE_CONFIGS[result.selected_city]
@@ -251,11 +260,12 @@ def _route_map_data(result: DecisionResult) -> tuple[pd.DataFrame, list[dict]]:
 
 
 def show_route_map(result: DecisionResult) -> None:
-    """На карте - порядок точек по прямой"""
+    """На карте — порядок точек по прямой, не фактические улицы/дороги."""
     markers, paths = _route_map_data(result)
     if markers.empty:
         st.info("Координаты маршрута не удалось загрузить; расписание доступно ниже.")
         return
+
     try:
         import pydeck as pdk
 
@@ -365,7 +375,7 @@ def main() -> None:
     st.write("**Единая система выбора направления и планирования путешествия**")
     st.caption(
         "От личных предпочтений и бюджетных ограничений — к обоснованному "
-        "выбору города и маршруту на 1-3 дня."
+        "выбору города и маршруту на 1–3 дня."
     )
     st.warning(
         "Исследовательский прототип: цены, тематические оценки и часть сведений "
@@ -439,7 +449,7 @@ def main() -> None:
             )
 
     if applied:
-        # В момент изменения профиля все предыдущие результаты должны устареть
+        # В момент изменения профиля все предыдущие результаты должны устареть.
         st.session_state.pop("ranking", None)
         st.session_state.pop("detail", None)
         st.session_state.pop("confirmed_city", None)
@@ -533,24 +543,29 @@ def main() -> None:
     if selected not in CITY_ROUTE_CONFIGS:
         st.info(
             "Для этого города пока не подготовлен каталог достопримечательностей. "
-            "Рейтинг города и смета доступны, построение маршрута - нет."
+            "Рейтинг города и смета доступны, построение маршрута — нет."
         )
     elif not Path(CITY_ROUTE_CONFIGS[selected].catalog_path).is_file():
         st.warning("Для выбранного города не найден CSV-каталог объектов.")
     else:
         st.caption(
-            "Расчет использует весь допустимый каталог города, правила питания, "
+            "Расчёт использует весь допустимый каталог города, правила питания, "
             "интересы, ограничения бюджета и часы работы объектов. "
             "Оптимизация выполняется только после нажатия кнопки."
         )
+        st.caption(
+            "Интерактивный расчет ограничен 90 секундами; "
+            "при сложных параметрах система может предложить повторить попытку."
+        )
         if st.button("Построить персональный маршрут", type="primary"):
-            # Результат со старым маршрутом не сохраняем при неудаче
+            # Результат со старым маршрутом не сохраняем при неудаче.
             st.session_state["detail"].route = None
             with st.spinner("Оптимизируем маршрут и проверяем расписание..."):
                 try:
                     st.session_state["detail"] = analyze_trip(
                         profile, selected_city=selected, build_route=True,
                         travel_year=year, travel_month=month,
+                        optimization_timeout_seconds=INTERACTIVE_ROUTE_TIMEOUT_SECONDS,
                     )
                 except Exception as exc:
                     st.error(f"Оптимизатор завершился с ошибкой: {exc}")
@@ -565,7 +580,7 @@ def main() -> None:
         for notice in st.session_state["detail"].notices:
             st.write("• " + notice)
         st.write(
-            "• Карты показывают схематичные линии, не реальные автомобильные/пешеходные пути"
+            "• Карты показывают схематичные линии, не реальные автомобильные/пешеходные пути."
         )
 
 

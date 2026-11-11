@@ -1,11 +1,14 @@
-"""Этап 8. Единый сервис выбора города, бюджета и персонального маршрута
-Маршруты строятся для городов с каталогом объектов в формате этапа 4
+"""Этап 8. Единый сервис выбора города, бюджета и персонального маршрута.
+
+Маршруты строятся для городов с каталогом объектов в формате этапа 4.
+Тестовые сметы и тематические оценки НЕ являются рыночными данными.
 Поддерживаемая продолжительность: 1–3 дня, время 10:00–20:00.
 """
 
 from dataclasses import dataclass, replace
 from math import inf, isfinite
 from pathlib import Path
+from time import monotonic
 from typing import Mapping
 
 import numpy as np
@@ -48,12 +51,14 @@ DEFAULT_COSTS_PATH = PROJECT_ROOT / "data" / "test" / "city_costs.csv"
 
 @dataclass(frozen=True)
 class CityRouteConfig:
-    """Настройки маршрута для города с каталогом достопримечательностей
-    city_center - центр проверки координат (широта, долгота)
-    start_coordinates - условное место проживания
-    start_object_id - альтернатива координатам: объект каталога у места
-    проживания. В старом сценарии Казани используется объект 'kremlin'
+    """Настройки маршрута для города с каталогом достопримечательностей.
+
+    city_center — центр проверки координат (широта, долгота).
+    start_coordinates — условное место проживания, НЕ реальная гостиница.
+    start_object_id — альтернатива координатам: объект каталога у места
+    проживания. В старом сценарии Казани используется объект 'kremlin'.
     """
+
     catalog_path: str | Path
     city_center: tuple[float, float] | None = None
     start_coordinates: tuple[float, float] | None = None
@@ -68,9 +73,9 @@ class CityRouteConfig:
 
 
 # Каталоги новых городов находятся в data/raw/. Центры городов
-# используются как условные места проживания
+# используются как УСЛОВНЫЕ места проживания, а не адреса гостиниц.
 # Добавление новых городов не требует менять алгоритмы: достаточно
-# зарегистрировать CityRouteConfig и положить CSV в указанную папку
+# зарегистрировать CityRouteConfig и положить CSV в указанную папку.
 CITY_ROUTE_CONFIGS: dict[str, CityRouteConfig] = {
     "Казань": CityRouteConfig(
         catalog_path=KAZAN_CATALOG,
@@ -97,7 +102,8 @@ CITY_ROUTE_CONFIGS: dict[str, CityRouteConfig] = {
 
 @dataclass
 class RouteResult:
-    """Выбранные объекты, расписания и стоимость готового маршрута"""
+    """Выбранные объекты, расписания и стоимость готового маршрута."""
+
     plan: pd.DataFrame
     schedules: dict[int, pd.DataFrame]
     history: pd.DataFrame
@@ -110,11 +116,14 @@ class RouteResult:
 
 @dataclass(frozen=True)
 class WeatherResult:
-    """Погодная информация для Казани из модели этапа 6
-    Температура - ПРОГНОЗ СРЕДНЕГО ЗА МЕСЯЦ
-    Вероятности - частоты исторических окон 2011-2025
-    Байесовские оценки - анализ чувствительности только Казани
+    """Погодная информация для Казани из модели этапа 6.
+
+    Температура — ПРОГНОЗ СРЕДНЕГО ЗА МЕСЯЦ, не на дату поездки.
+    Вероятности — частоты исторических окон 2011–2025, а не
+    краткосрочный прогноз. Байесовские оценки — анализ чувствительности
+    ТОЛЬКО Казани, не новый межгородской рейтинг.
     """
+
     city: str
     year: int
     month: int
@@ -142,12 +151,15 @@ class DecisionResult:
     weather: WeatherResult | None = None
 
 
-def _kazan_weather_report(profile: TravelProfile, year: int, month: int,) -> WeatherResult:
-    """Температура, осадки и чувствительность Байеса для Казани
-    Методики берутся из этапов 3 и 6; новые модели не обучаются
-    Соответствие сценариев этапа 3 и этапа 6 - допущение:
+def _kazan_weather_report(
+    profile: TravelProfile, year: int, month: int,
+) -> WeatherResult:
+    """Температура, осадки и чувствительность Байеса для Казани.
+
+    Методики берутся из этапов 3 и 6; новые модели не обучаются.
+    Соответствие сценариев этапа 3 и этапа 6 — допущение:
     без дождя = «лучше», дождь в части дней = «обычная»,
-    дождь все дни = «хуже»
+    дождь все дни = «хуже». Это НЕ прогноз погоды на конкретный день.
     """
     weather = load_weather()                      # ERA5 1991–2025
     monthly = to_table(monthly_series(weather))
@@ -160,7 +172,7 @@ def _kazan_weather_report(profile: TravelProfile, year: int, month: int,) -> Wea
     ).set_index("month").loc[month]
 
     # Повторяем оценки города из этапа 7: тематическая персонализация,
-    # критерии AHP и чувствительность 9 сценариев этапа 3
+    # критерии AHP и чувствительность 9 сценариев этапа 3.
     cities, scores = load_alternatives(DESTINATIONS_PATH)
     index = cities.index("Казань")
     city_scores = scores[index:index + 1].copy()
@@ -179,7 +191,7 @@ def _kazan_weather_report(profile: TravelProfile, year: int, month: int,) -> Wea
     ).loc["Казань"].to_numpy(dtype=float)
 
     # Для новой оценки Байеса сохраняем экспертные вероятности цен,
-    # заменяя только вероятности трех погодных сценариев
+    # заменяя только вероятности трех погодных сценариев.
     base_weather_prob = {name: probability for name, _, probability in WEATHER_STATES}
     revised_weather_prob = {
         "погода лучше": float(probabilities["p_better"]),
@@ -211,7 +223,7 @@ def _kazan_weather_report(profile: TravelProfile, year: int, month: int,) -> Wea
 
 
 def _meals_from_knowledge_base(profile: TravelProfile) -> int:
-    """Правила R10/R11 задают два приема пищи для семей и гурманов"""
+    """Правила R10/R11 задают два приема пищи для семей и гурманов."""
     kb = KnowledgeBase()
     add_profile(kb, profile.to_knowledge_profile())
     route_rules = [rule for rule in RULES if rule.name in ("R10", "R11")]
@@ -224,7 +236,7 @@ def _meals_from_knowledge_base(profile: TravelProfile) -> int:
 
 
 def _activity_limit(profile: TravelProfile, estimate: CityCostEstimate) -> float:
-    """Допустимые расходы на объекты после дороги, проживания и резерва"""
+    """Допустимые расходы на объекты после дороги, проживания и резерва."""
     costs = estimate.costs
     limits = []
     if profile.activity_budget is not None:
@@ -241,8 +253,10 @@ def _activity_limit(profile: TravelProfile, estimate: CityCostEstimate) -> float
     return min(limits) if limits else inf
 
 
-def _start_point(config: CityRouteConfig, objects: pd.DataFrame) -> tuple[float, float]:
-    """Координаты начала/конца маршрутов всех дней"""
+def _start_point(
+    config: CityRouteConfig, objects: pd.DataFrame
+) -> tuple[float, float]:
+    """Координаты начала/конца маршрутов всех дней."""
     if config.start_object_id is not None:
         if config.start_object_id not in objects.index:
             raise ValueError(
@@ -255,7 +269,7 @@ def _start_point(config: CityRouteConfig, objects: pd.DataFrame) -> tuple[float,
 
 
 def map_to_coordinates(point: tuple[float, float]) -> tuple[float, float]:
-    """Преобразует пару координат к числовому формату"""
+    """Преобразует пару координат к числовому формату."""
     try:
         lat, lon = map(float, point)
     except (TypeError, ValueError, OverflowError) as exc:
@@ -271,8 +285,10 @@ def _build_city_route(
     estimate: CityCostEstimate,
     ranked_places: pd.DataFrame,
     config: CityRouteConfig,
-    feedback_extra_min: int,) -> RouteResult:
-    """Персонализирует целевую функцию и строит маршрут заданного города"""
+    feedback_extra_min: int,
+    optimization_timeout_seconds: float | None = None,
+) -> RouteResult:
+    """Персонализирует целевую функцию и строит маршрут заданного города."""
     meals = _meals_from_knowledge_base(profile)
     budget_cap = _activity_limit(profile, estimate)
 
@@ -288,7 +304,7 @@ def _build_city_route(
     if len(objects) < 2:
         raise RuntimeError("Для кластеризации необходимо хотя бы два объекта")
 
-    # Как в старой версии: кластеры вычисляются на всем каталоге до фильтров
+    # Как в старой версии: кластеры вычисляются на всем каталоге до фильтров.
     objects["cluster"] = cluster_objects(objects)
     scores = ranked_places.set_index("object_id")["score"]
     objects = objects.loc[objects.index.intersection(scores.index)].copy()
@@ -296,15 +312,15 @@ def _build_city_route(
         raise RuntimeError("После фильтрации не осталось доступных объектов")
 
     # Оптимизатор этапа 4 максимизирует столбец attractiveness. Подставляем
-    # в него персональные оценки, сохранив исходную привлекательность отдельно
+    # в него персональные оценки, сохранив исходную привлекательность отдельно.
     objects["original_attractiveness"] = objects["attractiveness"]
     objects["attractiveness"] = scores.loc[objects.index].astype(float)
 
     available_food = int((objects["category"] == "food").sum())
     if available_food < meals:
         raise RuntimeError("В каталоге недостаточно кафе даже для одного дня")
-    # При нехватке разных кафе разрешаем повторить кафе в другой день
-    # Другие достопримечательности повторять нельзя
+    # При нехватке разных кафе разрешаем повторить кафе в другой день.
+    # Другие достопримечательности повторять нельзя.
     repeat_food = available_food < meals * profile.days
 
     if budget_cap == inf:
@@ -316,7 +332,7 @@ def _build_city_route(
     trip = {
         "days": profile.days,
         # При двух приемах пищи оставляем 120 мин резерва на разделенные
-        # окна обеда и ужина: фактический день всё равно 10:00–20:00
+        # окна обеда и ужина: фактический день всё равно 10:00–20:00.
         "day_minutes": 480 if meals == 2 else 600,
         "budget": budget_cap,
         "meals_per_day": meals,
@@ -326,19 +342,45 @@ def _build_city_route(
     # При обеде и ужине два разнесенных временных окна оставляют меньше
     # свободы для посещений. Если жадная по полезности верхняя модель
     # выбрала набор, не помещающийся в расписание, уменьшаем ее временной
-    # лимит и ищем более компактный маршрут. Реальный день 10–20 не меняем
+    # лимит и ищем более компактный маршрут. Реальный день 10–20 не меняем.
     daily_limits = (480, 420, 360) if meals == 2 else (600,)
+    # Общий тайм-аут применяется только при явном запросе (из Streamlit).
+    # Программные сценарии и тесты с None работают без нового лимита.
+    deadline = (
+        monotonic() + optimization_timeout_seconds
+        if optimization_timeout_seconds is not None else None
+    )
     best = None
     history = pd.DataFrame()
-    for candidate_minutes in daily_limits:
+    timed_out = False
+    for index, candidate_minutes in enumerate(daily_limits):
+        remaining = deadline - monotonic() if deadline is not None else None
+        if remaining is not None and remaining <= 0:
+            timed_out = True
+            break
+        # При двух приемах пищи делим общий лимит между тремя
+        # альтернативными вариантами продолжительности посещений.
+        if remaining is not None and meals == 2:
+            remaining = min(remaining, remaining / (len(daily_limits) - index))
         trip["day_minutes"] = candidate_minutes
-        best, history = plan_with_feedback(
-            objects, cluster_access, hotel_lat, hotel_lon,
-            trip, max_extra=feedback_extra_min,
-        )
+        try:
+            best, history = plan_with_feedback(
+                objects, cluster_access, hotel_lat, hotel_lon,
+                trip, max_extra=feedback_extra_min,
+                max_seconds=remaining,
+            )
+        except TimeoutError:
+            timed_out = True
+            continue
         if best is not None:
             break
     if best is None:
+        if timed_out or (deadline is not None and monotonic() >= deadline):
+            raise RuntimeError(
+                "Расчёт остановлен по лимиту времени. Это не означает, "
+                "что маршрут невозможен. Попробуй 1–2 дня, меньший "
+                "набор требований или повтори расчет."
+            )
         raise RuntimeError(
             "Не удалось подобрать маршрут в пределах часов работы и дня "
             "(проверены более компактные планы с обедом и ужином)"
@@ -377,11 +419,13 @@ def analyze_trip(
     city_configs: Mapping[str, CityRouteConfig] | None = None,
     travel_year: int | None = None,
     travel_month: int | None = None,
+    optimization_timeout_seconds: float | None = None,
 ) -> DecisionResult:
     """Рейтинг городов → бюджет → объекты → (по запросу) маршрут.
+
     Для новых городов можно передать дополнительные city_configs.
     Если каталога нет, рейтинг и смета продолжают работать.
-    Поддерживаемая продолжительность маршрута - от 1 до 3 дней
+    Поддерживаемая продолжительность маршрута — от 1 до 3 дней.
     """
     if profile.origin is None:
         raise ValueError("Укажи город отправления в TravelProfile.origin")
@@ -403,6 +447,13 @@ def analyze_trip(
             or not isinstance(feedback_extra_min, int)
             or not 0 <= feedback_extra_min <= 120):
         raise ValueError("feedback_extra_min должен быть целым числом от 0 до 120")
+
+    if optimization_timeout_seconds is not None:
+        if (isinstance(optimization_timeout_seconds, bool)
+                or not isinstance(optimization_timeout_seconds, (int, float))
+                or not isfinite(optimization_timeout_seconds)
+                or optimization_timeout_seconds <= 0):
+            raise ValueError("optimization_timeout_seconds должен быть положительным")
 
     configs = {**CITY_ROUTE_CONFIGS, **(city_configs or {})}
     estimates = expand_test_cost_estimates(load_cost_estimates(costs_path))
@@ -450,8 +501,8 @@ def analyze_trip(
                         profile, travel_year, travel_month
                     )
                     notices.append(
-                        "Этап 6: температура - прогноз среднего за месяц, "
-                        "погодные вероятности - исторические частоты 2011–2025. "
+                        "Этап 6: температура — прогноз среднего за месяц, "
+                        "погодные вероятности — исторические частоты 2011–2025. "
                         "Казань пересчитана по Байесу отдельно; "
                         "общий рейтинг городов не изменен. "
                         "Погодный сценарий маршрута задается вручную."
@@ -522,10 +573,11 @@ def analyze_trip(
                     )
                 else:
                     # Предварительная смета может быть завышена: оптимизатор
-                    # иногда находит набор объектов дешевле плановой оценки
+                    # иногда находит набор объектов дешевле плановой оценки.
                     try:
                         route = _build_city_route(
-                            profile, estimate, all_places, config, feedback_extra_min
+                            profile, estimate, all_places, config, feedback_extra_min,
+                            optimization_timeout_seconds,
                         )
                         if not financially_allowed:
                             notices.append(
@@ -553,6 +605,7 @@ def analyze_trip(
 
 
 if __name__ == "__main__":
+    # Прежний тестовый сценарий Казани должен работать без изменений.
     profile = TravelProfile(
         origin="Москва", days=2, total_budget=30_000,
         tickets_budget=15_000, activity_budget=3_000,

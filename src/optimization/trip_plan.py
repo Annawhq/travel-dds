@@ -92,7 +92,8 @@ def solve_clustered_trip(
     meals_per_day: int = 0,
     max_per_category: int | None = None,
     walk_min: int = WALK_IN_CLUSTER_MIN,
-    allow_repeat_food: bool = False,) -> pd.DataFrame:
+    allow_repeat_food: bool = False,
+    solver_time_limit: float | None = None,) -> pd.DataFrame:
     """
     Модель распределения объектов по дням с кластерами пешей доступности
     Столбец objects["cluster"] - кластер объекта,
@@ -125,10 +126,10 @@ def solve_clustered_trip(
     # Объект можно посетить только в тот день, когда едем в его кластер
     for (i, d) in x:
         model += x[i, d] <= y[objects.at[i, "cluster"], d], f"link_{i}_day{d}"
-    # Ранее все кластеры могли использоваться только в одном дне
+    # Ранее ВСЕ кластеры могли использоваться только в одном дне.
     # Для 3-дневной поездки с двумя приемами пищи кафе может понадобиться
-    # повторно. Разрешаем повторные посещения только для категории food
-    # Прочие объекты продолжают посещаться не более одного раза за поездку
+    # повторно. Разрешаем повторные посещения только для категории food.
+    # Прочие объекты продолжают посещаться не более одного раза за поездку.
     for c in clusters:
         cluster_items = objects.loc[objects["cluster"] == c]
         has_food = (cluster_items["category"] == "food").any()
@@ -153,8 +154,14 @@ def solve_clustered_trip(
                 model += pulp.lpSum(x[i, d] for i in members) <= max_per_category, f"cat_{category}_day{d}"
 
     model += pulp.lpSum(value(i, "price") * x[i, d] for (i, d) in x) <= budget, "budget"
-    model.solve(pulp.PULP_CBC_CMD(msg=False))
+    # При вызове из интерфейса CBC получает ограничение времени.
+    # Без него (старые тесты и этап 4) расчет работает как раньше.
+    model.solve(pulp.PULP_CBC_CMD(msg=False, timeLimit=solver_time_limit))
     status = pulp.LpStatus[model.status]
+    if solver_time_limit is not None and status == "Not Solved":
+        raise TimeoutError(
+            "Решатель CBC не завершил выбор объектов за отведенное время"
+        )
     if status != "Optimal":
         raise RuntimeError(f"Оптимальное решение не найдено, статус: {status}")
 

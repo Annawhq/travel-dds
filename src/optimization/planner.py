@@ -1,6 +1,7 @@
 import pandas as pd
+from time import monotonic
 from src.optimization.objects import PROJECT_ROOT, load_objects
-from src.optimization.routing import DAY_END, solve_day_route
+from src.optimization.routing import DAY_END, ROUTE_TIME_LIMIT, solve_day_route
 from src.optimization.travel import (
     access_time,
     cluster_access_time,
@@ -24,17 +25,26 @@ def clock_to_minutes(value: str) -> int:
     return int(hours) * 60 + int(minutes)
 
 
-def route_all_days(plan, hotel_lat, hotel_lon):
-    """
-    Строит маршрут для каждого дня плана
-    Возвращает словарь {день: расписание} или None,
-    если хотя бы один день не укладывается в часы работы и 20:00
-    """
+def route_all_days(plan, hotel_lat, hotel_lon, *, deadline: float | None = None):
+    """Маршруты всех дней. Deadline используется только в интерфейсном режиме."""
     routes = {}
     for day, group in plan.groupby("day"):
+        # Не начинаем еще одну задачу, если общий лимит уже закончился.
+        time_limit = ROUTE_TIME_LIMIT
+        if deadline is not None:
+            remaining = deadline - monotonic()
+            if remaining <= 0:
+                raise TimeoutError("Истек общий лимит времени планирования")
+            time_limit = min(float(ROUTE_TIME_LIMIT), max(0.1, remaining))
         try:
-            routes[day] = solve_day_route(group, hotel_lat, hotel_lon)
+            routes[day] = solve_day_route(
+                group, hotel_lat, hotel_lon, time_limit=time_limit
+            )
         except RuntimeError:
+            # Набор объектов может быть несовместим с временными окнами.
+            # В том числе решатель может не успеть найти маршрут за лимит.
+            if deadline is not None and monotonic() >= deadline:
+                raise TimeoutError("Истек общий лимит времени планирования")
             return None
     return routes
 
@@ -46,23 +56,55 @@ def plan_with_feedback(
     hotel_lon: float,
     trip: dict,
     step: int = BUDGET_STEP_MIN,
-    max_extra: int = MAX_EXTRA_MIN,):
+    max_extra: int = MAX_EXTRA_MIN,
+    max_seconds: float | None = None,
+):
+    """Согласование отбора объектов и расписаний.
+
+    max_seconds=None сохраняет исходное поведение этапа 4 и тестов.
+    В интерфейсе общий дедлайн ограничивает все повторные вызовы CBC.
+    Если один допустимый план уже построен, возвращается он, даже когда
+    более сложная следующая итерация не уложилась в лимит времени.
     """
-    Обратная связь между уровнями модели
-    Модель отбора (верхний уровень) оценивает дорогу с запасом,
-    поэтому ей постепенно увеличивают бюджет времени дня
-    Каждый план проверяется моделью маршрута (нижний уровень)
-    Поиск останавливается на первом плане, который нельзя выполнить
-    до 20:00, и возвращает последний выполнимый план
-    """
+    if max_seconds is not None and max_seconds <= 0:
+        raise TimeoutError("Время планирования истекло")
+    deadline = monotonic() + max_seconds if max_seconds is not None else None
+
     history = []
     best = None
     base_budget = trip["day_minutes"]
     for budget in range(base_budget, base_budget + max_extra + 1, step):
-        plan = solve_clustered_trip(
-            objects, cluster_access, **{**trip, "day_minutes": budget}
+        remaining = deadline - monotonic() if deadline is not None else None
+        if remaining is not None and remaining <= 0:
+            if best is None:
+                raise TimeoutError("Не удалось получить маршрут за отведенное время")
+            break
+
+        # Оставляем время и для маршрутизации по дням: CBC верхнего
+        # уровня получает не более 45% остатка и максимум 20 секунд.
+        upper_limit = (
+            None if remaining is None
+            else max(0.1, min(20.0, remaining * 0.45))
         )
-        routes = route_all_days(plan, hotel_lat, hotel_lon)
+        try:
+            plan = solve_clustered_trip(
+                objects, cluster_access,
+                **{**trip, "day_minutes": budget},
+                solver_time_limit=upper_limit,
+            )
+        except TimeoutError:
+            if best is None:
+                raise
+            break
+
+        try:
+            routes = route_all_days(
+                plan, hotel_lat, hotel_lon, deadline=deadline
+            )
+        except TimeoutError:
+            if best is None:
+                raise
+            break
         feasible = routes is not None
 
         returns = (
